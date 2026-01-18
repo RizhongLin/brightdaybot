@@ -135,8 +135,8 @@ def register_modal_handlers(app):
             # Save birthday with preferences using existing function
             updated = save_birthday(date_ddmm, user_id, birth_year, username, preferences)
 
-            # Send external backup
-            trigger_external_backup(updated, username, app)
+            # Send external backup with user_id for preferences lookup
+            trigger_external_backup(updated, username, app, user_id=user_id)
 
             # Check if birthday is today
             if check_if_birthday_today(date_ddmm):
@@ -175,7 +175,11 @@ def register_modal_handlers(app):
 
 def _send_modal_confirmation(client, user_id, date_ddmm, birth_year, updated):
     """Send confirmation after modal submission."""
-    from storage.birthdays import CELEBRATION_STYLES, get_user_preferences
+    from storage.birthdays import (
+        CELEBRATION_STYLE_EMOJIS,
+        CELEBRATION_STYLES,
+        get_user_preferences,
+    )
     from utils.date import calculate_age, date_to_words, get_star_sign
 
     date_words = date_to_words(date_ddmm, birth_year)
@@ -186,9 +190,7 @@ def _send_modal_confirmation(client, user_id, date_ddmm, birth_year, updated):
     prefs = get_user_preferences(user_id) or {}
     celebration_style = prefs.get("celebration_style", "standard")
     style_description = CELEBRATION_STYLES.get(celebration_style, "Standard celebration")
-
-    # Style emoji mapping
-    style_emoji = {"quiet": "🤫", "standard": "🎊", "epic": "🚀"}.get(celebration_style, "🎊")
+    style_emoji = CELEBRATION_STYLE_EMOJIS.get(celebration_style, "🎊")
 
     action = "updated" if updated else "saved"
 
@@ -207,9 +209,7 @@ def _send_modal_confirmation(client, user_id, date_ddmm, birth_year, updated):
     ]
 
     if age:
-        blocks[1]["fields"].append(
-            {"type": "mrkdwn", "text": f"*🎈 Age:*\n{age} years"}
-        )
+        blocks[1]["fields"].append({"type": "mrkdwn", "text": f"*🎈 Age:*\n{age} years"})
 
     # Add celebration style info
     blocks.append(

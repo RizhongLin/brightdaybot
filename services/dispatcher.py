@@ -29,6 +29,9 @@ from slack.client import (
     is_admin,
 )
 from storage.birthdays import (
+    CELEBRATION_STYLE_EMOJIS,
+    CELEBRATION_STYLES,
+    get_user_preferences,
     remove_birthday,
     save_birthday,
 )
@@ -38,6 +41,7 @@ from utils.date import (
     check_if_birthday_today,
     date_to_words,
     extract_date,
+    get_star_sign,
 )
 
 # Confirmation timeout from centralized config
@@ -332,19 +336,28 @@ def handle_dm_date(say, user, result, app):
         try:
             from slack.blocks import build_confirmation_blocks
 
+            # Get star sign and celebration style for confirmation
+            star_sign = get_star_sign(date)
+            prefs = get_user_preferences(user) or {}
+            celebration_style = prefs.get("celebration_style", "standard")
+            style_emoji = CELEBRATION_STYLE_EMOJIS.get(celebration_style, "🎊")
+            style_desc = CELEBRATION_STYLES.get(celebration_style, "Standard celebration")
+
+            # Build details dict
+            details = {
+                "📅 Birthday": date_words,
+                "⭐ Star Sign": star_sign,
+            }
+            if age_text:
+                details["🎈 Age"] = age_text.replace(" (Age: ", "").replace(")", "")
+            details[f"{style_emoji} Style"] = f"{celebration_style.title()} - {style_desc}"
+
             if updated:
                 blocks, fallback = build_confirmation_blocks(
                     title="Birthday Updated!",
                     message="Your birthday has been updated successfully.\n\nIf this is incorrect, please send the correct date.",
                     action_type="success",
-                    details={
-                        "Birthday": date_words,
-                        "Age": (
-                            age_text.replace(" (Age: ", "").replace(")", "")
-                            if age_text
-                            else "Not specified"
-                        ),
-                    },
+                    details=details,
                 )
                 say(blocks=blocks, text=fallback)
                 logger.info(
@@ -355,14 +368,7 @@ def handle_dm_date(say, user, result, app):
                     title="Birthday Saved!",
                     message="Your birthday has been saved successfully!\n\nIf this is incorrect, please send the correct date.",
                     action_type="success",
-                    details={
-                        "Birthday": date_words,
-                        "Age": (
-                            age_text.replace(" (Age: ", "").replace(")", "")
-                            if age_text
-                            else "Not specified"
-                        ),
-                    },
+                    details=details,
                 )
                 say(blocks=blocks, text=fallback)
                 logger.info(
@@ -391,10 +397,10 @@ def handle_dm_date(say, user, result, app):
                 )
 
     # Send external backup after user confirmation to avoid API conflicts
-    _send_external_backup_if_enabled(updated, username, app)
+    _send_external_backup_if_enabled(updated, username, app, user_id=user)
 
 
-def _send_external_backup_if_enabled(updated, username, app, change_type=None):
+def _send_external_backup_if_enabled(updated, username, app, change_type=None, user_id=None):
     """
     Send external backup after birthday changes if enabled.
 
@@ -403,10 +409,11 @@ def _send_external_backup_if_enabled(updated, username, app, change_type=None):
         username: Username of the person whose birthday changed
         app: Slack app instance for sending backup
         change_type: Optional override for change type ("add", "update", "remove")
+        user_id: User ID of the person whose birthday changed (for preferences lookup)
     """
     from storage.birthdays import trigger_external_backup
 
-    trigger_external_backup(updated, username, app, change_type)
+    trigger_external_backup(updated, username, app, change_type, user_id)
 
 
 def handle_command(text, user_id, say, app):
@@ -564,19 +571,28 @@ def _handle_add_command(parts, user_id, username, say, app):
         try:
             from slack.blocks import build_confirmation_blocks
 
+            # Get star sign and celebration style for confirmation
+            star_sign = get_star_sign(date)
+            prefs = get_user_preferences(user_id) or {}
+            celebration_style = prefs.get("celebration_style", "standard")
+            style_emoji = CELEBRATION_STYLE_EMOJIS.get(celebration_style, "🎊")
+            style_desc = CELEBRATION_STYLES.get(celebration_style, "Standard celebration")
+
+            # Build details dict
+            details = {
+                "📅 Birthday": date_words,
+                "⭐ Star Sign": star_sign,
+            }
+            if age_text:
+                details["🎈 Age"] = age_text.replace(" (Age: ", "").replace(")", "")
+            details[f"{style_emoji} Style"] = f"{celebration_style.title()} - {style_desc}"
+
             if updated:
                 blocks, fallback = build_confirmation_blocks(
                     title="Birthday Updated!",
                     message="Your birthday has been updated successfully.",
                     action_type="success",
-                    details={
-                        "Birthday": date_words,
-                        "Age": (
-                            age_text.replace(" (Age: ", "").replace(")", "")
-                            if age_text
-                            else "Not specified"
-                        ),
-                    },
+                    details=details,
                 )
                 say(blocks=blocks, text=fallback)
                 logger.info(
@@ -587,14 +603,7 @@ def _handle_add_command(parts, user_id, username, say, app):
                     title="Birthday Saved!",
                     message="Your birthday has been saved successfully!",
                     action_type="success",
-                    details={
-                        "Birthday": date_words,
-                        "Age": (
-                            age_text.replace(" (Age: ", "").replace(")", "")
-                            if age_text
-                            else "Not specified"
-                        ),
-                    },
+                    details=details,
                 )
                 say(blocks=blocks, text=fallback)
                 logger.info(
@@ -619,7 +628,7 @@ def _handle_add_command(parts, user_id, username, say, app):
                 )
 
     # Send external backup after user confirmation
-    _send_external_backup_if_enabled(updated, username, app)
+    _send_external_backup_if_enabled(updated, username, app, user_id=user_id)
 
 
 def _handle_remove_command(user_id, username, say, app):

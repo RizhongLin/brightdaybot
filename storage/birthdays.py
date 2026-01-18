@@ -71,6 +71,13 @@ CELEBRATION_STYLES = {
     "epic": "Over-the-top message, AI image, and celebratory reactions",
 }
 
+# Celebration style emojis for display
+CELEBRATION_STYLE_EMOJIS = {
+    "quiet": "🤫",
+    "standard": "🎊",
+    "epic": "🚀",
+}
+
 
 def create_backup():
     """
@@ -123,7 +130,9 @@ def rotate_backups():
         logger.error(f"BACKUP_ERROR: Failed to rotate backups: {e}")
 
 
-def send_external_backup(backup_file_path, change_type="update", username=None, app=None):
+def send_external_backup(
+    backup_file_path, change_type="update", username=None, app=None, user_id=None
+):
     """
     Send backup file to admin users via DM and optionally to backup channel.
 
@@ -132,6 +141,7 @@ def send_external_backup(backup_file_path, change_type="update", username=None, 
         change_type: Type of change that triggered backup ("add", "update", "remove", "manual")
         username: Username of person whose birthday changed (for context)
         app: Slack app instance (required for sending messages)
+        user_id: User ID of person whose birthday changed (for preferences lookup)
     """
     logger.info(f"BACKUP: send_external_backup called - type: {change_type}, user: {username}")
 
@@ -158,9 +168,20 @@ def send_external_backup(backup_file_path, change_type="update", username=None, 
             "manual": "Manual backup created",
         }.get(change_type, "Data changed")
 
+        # Get user's preferences for context if available
+        prefs_text = ""
+        if user_id and change_type in ("add", "update"):
+            user_data = birthdays.get(user_id, {})
+            prefs = user_data.get("preferences", {})
+            style = prefs.get("celebration_style", "standard")
+            if style != "standard":
+                style_emoji = CELEBRATION_STYLE_EMOJIS.get(style, "🎊")
+                style_desc = CELEBRATION_STYLES.get(style, "")
+                prefs_text = f"\n{style_emoji} *Style:* {style.title()} - {style_desc}"
+
         message = f"""🗂️ *Birthday Data Backup* - {timestamp}
 
-📊 *Changes:* {change_text}
+📊 *Changes:* {change_text}{prefs_text}
 📁 *File:* {os.path.basename(backup_file_path)} ({file_size_kb} KB)
 👥 *Total Birthdays:* {total_birthdays} people
 🔄 *Auto-backup after data changes*
@@ -206,7 +227,7 @@ This backup was automatically created to protect your birthday data."""
         logger.error(f"BACKUP: Failed to send external backup: {e}")
 
 
-def trigger_external_backup(updated, username, app, change_type=None):
+def trigger_external_backup(updated, username, app, change_type=None, user_id=None):
     """
     Trigger external backup after birthday changes if enabled.
 
@@ -217,6 +238,7 @@ def trigger_external_backup(updated, username, app, change_type=None):
         username: Username of the person whose birthday changed
         app: Slack app instance for sending backup
         change_type: Optional override for change type ("add", "update", "remove")
+        user_id: User ID of the person whose birthday changed (for preferences lookup)
     """
     from config import BACKUP_ON_EVERY_CHANGE
 
@@ -233,7 +255,7 @@ def trigger_external_backup(updated, username, app, change_type=None):
             latest_backup = max(backup_files, key=lambda x: os.path.getmtime(x))
             if change_type is None:
                 change_type = "update" if updated else "add"
-            send_external_backup(latest_backup, change_type, username, app)
+            send_external_backup(latest_backup, change_type, username, app, user_id)
     except Exception as e:
         logger.error(f"BACKUP: Failed to trigger external backup: {e}")
 
