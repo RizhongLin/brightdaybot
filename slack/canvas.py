@@ -352,6 +352,7 @@ def _build_dashboard_markdown(app=None):
     sections += [
         _build_engagement_section(),
         _build_scheduler_section(),
+        _build_ai_usage_section(),
         _build_observances_section(),
         _build_backups_section(app),
     ]
@@ -609,6 +610,37 @@ def _build_scheduler_section():
     except Exception as e:
         logger.error(f"CANVAS: Failed to build scheduler section: {e}")
         return "## ⏰ Scheduler\n*Error loading scheduler data.*"
+
+
+def _build_ai_usage_section():
+    """Build the AI usage section (today's calls and tokens, top contexts)."""
+    try:
+        from storage.ai_usage import get_today_usage
+
+        usage = get_today_usage()
+        if not usage.get("calls"):
+            return "## 🤖 AI Usage Today\n*No AI calls yet today.*"
+
+        top_contexts = sorted(
+            usage.get("by_context", {}).items(),
+            key=lambda kv: kv[1].get("calls", 0),
+            reverse=True,
+        )[:3]
+        top_lines = "\n".join(
+            f"- `{name}`: {data.get('calls', 0)} call(s), "
+            f"{data.get('input_tokens', 0) + data.get('output_tokens', 0):,} tokens"
+            for name, data in top_contexts
+        )
+
+        return f"""## 🤖 AI Usage Today
+- **API calls**: {usage["calls"]}
+- **Tokens**: {usage["input_tokens"]:,} in / {usage["output_tokens"]:,} out
+
+### Top contexts
+{top_lines}"""
+    except Exception as e:
+        logger.error(f"CANVAS: Failed to build AI usage section: {e}")
+        return "## 🤖 AI Usage Today\n*Error loading usage data.*"
 
 
 def _build_observances_section():

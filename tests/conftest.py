@@ -124,3 +124,16 @@ def sample_birthdays(mock_birthday_data):
         "U003": mock_birthday_data(date="01/01", year=None, image_enabled=False),
         "U004": mock_birthday_data(date="29/02", year=2000, active=False),  # Paused user
     }
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ai_usage(tmp_path, monkeypatch):
+    """Keep AI usage accounting out of the real data/tracking directory.
+
+    Mocked OpenAI responses in tests carry fake usage objects which would
+    otherwise be recorded to the production tracking file.
+    """
+    import storage.ai_usage as ai_usage
+
+    monkeypatch.setattr(ai_usage, "AI_USAGE_FILE", str(tmp_path / "ai_usage_daily.json"))
+    monkeypatch.setattr(ai_usage, "TRACKING_DIR", str(tmp_path))
