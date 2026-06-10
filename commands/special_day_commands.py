@@ -749,10 +749,7 @@ In daily mode, individual announcements are posted each day with observances."""
                     say(f"❌ Source `{source_id}` not found. Available: {available}")
                     return
                 say(f"🔄 Refreshing *{src.label}* ({source_id})...")
-                if src.fetch_strategy == "yearly":
-                    stats = client._prefetch_yearly(src, force=True)
-                else:
-                    stats = client._prefetch_daily(src, force=True)
+                stats = client._prefetch_yearly(src, force=True)
                 results = {source_id: stats}
             else:
                 say("🔄 Refreshing Calendarific cache (all sources)...")
@@ -868,13 +865,12 @@ _Use `admin special [un|unesco|who]-refresh` or `all-refresh` to force update._"
             for sid, info in status.get("sources", {}).items():
                 flag = "✅" if info["enabled"] else "❌"
                 count = info.get("holiday_count", 0)
-                strategy = info.get("fetch_strategy", "daily")
                 fresh = "🟢" if info.get("cache_fresh") else "🟡"
                 updated = info.get("last_updated", "—")
                 if isinstance(updated, str) and "T" in updated:
                     updated = f"`{updated[:10]}`"
                 source_lines.append(
-                    f"• {flag} *{info['label']}* ({info['country']}) — {fresh} {count} holidays, {strategy}, updated {updated}"
+                    f"• {flag} *{info['label']}* ({info['country']}) — {fresh} {count} holidays, updated {updated}"
                 )
             sources_text = "\n".join(source_lines) if source_lines else "• No sources configured"
 

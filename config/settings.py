@@ -552,14 +552,13 @@ CALENDARIFIC_API_KEY = os.getenv("CALENDARIFIC_API_KEY")
 CALENDARIFIC_ENABLED = os.getenv("CALENDARIFIC_ENABLED", "false").lower() == "true"
 CALENDARIFIC_CACHE_DIR = os.path.join(CACHE_DIR, "calendarific")
 CALENDARIFIC_CACHE_TTL_DAYS = int(os.getenv("CALENDARIFIC_CACHE_TTL_DAYS", "7"))
-CALENDARIFIC_PREFETCH_DAYS = int(os.getenv("CALENDARIFIC_PREFETCH_DAYS", "7"))
 CALENDARIFIC_RATE_LIMIT_MONTHLY = 500  # Free tier: 500 calls/month
 CALENDARIFIC_SOURCES_STATE_FILE = os.path.join(STORAGE_DIR, "calendarific_sources.json")
 CALENDARIFIC_RATE_WARNING_THRESHOLD = 400  # Warn when approaching limit
 CALENDARIFIC_STATS_FILE = os.path.join(STORAGE_DIR, "calendarific_stats.json")
 
 # Multi-source configuration: each source fetches from a different country/region
-# fetch_strategy: "daily" = fetch day-by-day (N API calls), "yearly" = fetch entire year (1 API call)
+# All sources are fetched yearly: one API call caches the entire year per source
 # whitelist: empty = include all holidays; non-empty = only matching names (case-insensitive)
 CALENDARIFIC_SOURCES = [
     {
@@ -571,7 +570,6 @@ CALENDARIFIC_SOURCES = [
         "category": "Holiday",
         "emoji": "📅",
         "whitelist": [],
-        "fetch_strategy": "yearly",
         "api_type": "national,local",
     },
     {
@@ -592,7 +590,6 @@ CALENDARIFIC_SOURCES = [
             "Thanksgiving",
             "Veterans Day",
         ],
-        "fetch_strategy": "yearly",
         "api_type": "national",
     },
     {
@@ -604,7 +601,6 @@ CALENDARIFIC_SOURCES = [
         "category": "Religious",
         "emoji": "🌙",
         "whitelist": ["Eid al-Fitr", "Eid al-Adha", "Ramadan", "Muharram", "Arafat Day"],
-        "fetch_strategy": "yearly",
         "api_type": "",
     },
     {
@@ -626,7 +622,6 @@ CALENDARIFIC_SOURCES = [
             "Tu Bishvat",
             "Shemini Atzeret",
         ],
-        "fetch_strategy": "yearly",
         "api_type": "",
     },
     {
@@ -650,7 +645,6 @@ CALENDARIFIC_SOURCES = [
             "Dussehra",
             "Guru Nanak Jayanti",
         ],
-        "fetch_strategy": "yearly",
         "api_type": "",
     },
     {
@@ -666,7 +660,6 @@ CALENDARIFIC_SOURCES = [
             "Visakha Bucha",
             "Asalha Bucha",
         ],
-        "fetch_strategy": "yearly",
         "api_type": "",
     },
 ]

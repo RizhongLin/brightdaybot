@@ -2,8 +2,9 @@
 Calendarific API Client for BrightDayBot
 
 Multi-source holiday fetcher with per-source caching and shared rate limiting.
-Each source represents a country/region with its own fetch strategy,
-category, emoji, and optional holiday name whitelist.
+Each source represents a country/region with its own category, emoji, and
+optional holiday name whitelist. All sources fetch yearly: one API call
+caches the entire year per source.
 
 Sources are configured in config/settings.py CALENDARIFIC_SOURCES.
 API docs: https://calendarific.com/api-documentation
@@ -24,7 +25,6 @@ from config import (
     CALENDARIFIC_CACHE_DIR,
     CALENDARIFIC_CACHE_TTL_DAYS,
     CALENDARIFIC_ENABLED,
-    CALENDARIFIC_PREFETCH_DAYS,
     CALENDARIFIC_RATE_LIMIT_MONTHLY,
     CALENDARIFIC_RATE_WARNING_THRESHOLD,
     CALENDARIFIC_SOURCES,
@@ -64,7 +64,6 @@ class CalendarificSource:
     category: str = "Holiday"
     emoji: str = "📅"
     whitelist: List[str] = field(default_factory=list)
-    fetch_strategy: str = "daily"  # "daily" or "yearly"
     api_type: str = "national,local"
 
     @classmethod
@@ -78,7 +77,6 @@ class CalendarificSource:
             category=d.get("category", "Holiday"),
             emoji=d.get("emoji", "📅"),
             whitelist=d.get("whitelist", []),
-            fetch_strategy=d.get("fetch_strategy", "daily"),
             api_type=d.get("api_type", "national,local"),
         )
 
@@ -154,127 +152,36 @@ class CalendarificClient:
         cache_data = self._load_cache(source)
         date_key = date.strftime("%Y-%m-%d")
 
-        if source.fetch_strategy == "yearly":
-            cached_year = cache_data.get("year")
-            if not cache_data.get("cached_at") or cached_year != date.year:
-                logger.info(f"CALENDARIFIC [{source.id}]: Auto-populating yearly cache...")
-                self._prefetch_yearly(source, force=True)
-                cache_data = self._load_cache(source)
+        # All sources use the yearly strategy: one API call caches the whole
+        # year, refreshed when the cached year doesn't match the request
+        cached_year = cache_data.get("year")
+        if not cache_data.get("cached_at") or cached_year != date.year:
+            logger.info(f"CALENDARIFIC [{source.id}]: Auto-populating yearly cache...")
+            self._prefetch_yearly(source, force=True)
+            cache_data = self._load_cache(source)
 
-            entry = cache_data.get("entries", {}).get(date_key)
-            if not entry:
-                return []
-            return [
-                self._dict_to_special_day(h, source)
-                for h in entry.get("holidays", [])
-                if self._matches_source_filter(h, source)
-            ]
-
-        # Daily strategy
         entry = cache_data.get("entries", {}).get(date_key)
-        cached = entry.get("holidays") if entry else None
-
-        if cached is not None and self._is_entry_fresh(entry):
-            return [
-                self._dict_to_special_day(h, source)
-                for h in cached
-                if self._matches_source_filter(h, source)
-            ]
-
-        if not self.api_key:
-            if cached is not None:
-                return [
-                    self._dict_to_special_day(h, source)
-                    for h in cached
-                    if self._matches_source_filter(h, source)
-                ]
+        if not entry:
             return []
-
-        try:
-            self._check_rate_limit()
-            holidays = self._fetch_from_api(source, date.year, date.month, date.day)
-            self._save_entry(source, date, holidays)
-            self._increment_rate_counter()
-            return [
-                self._dict_to_special_day(h, source)
-                for h in holidays
-                if self._matches_source_filter(h, source)
-            ]
-        except Exception as e:
-            logger.warning(f"CALENDARIFIC [{source.id}]: Fetch failed for {date_key}: {e}")
-            if cached is not None:
-                return [self._dict_to_special_day(h, source) for h in cached]
-            return []
+        return [
+            self._dict_to_special_day(h, source)
+            for h in entry.get("holidays", [])
+            if self._matches_source_filter(h, source)
+        ]
 
     # ---- Prefetching ----
 
     def prefetch_all(self, force: bool = False) -> Dict[str, dict]:
-        """Prefetch all enabled sources. Returns per-source stats."""
+        """Prefetch all enabled sources (yearly). Returns per-source stats."""
         results = {}
         for source in self.get_enabled_sources():
-            if source.fetch_strategy == "yearly":
-                results[source.id] = self._prefetch_yearly(source, force=force)
-            else:
-                results[source.id] = self._prefetch_daily(source, force=force)
+            results[source.id] = self._prefetch_yearly(source, force=force)
         self._update_last_prefetch()
         return results
 
     # Backward compatibility
     def weekly_prefetch(self, days_ahead: int = None, force: bool = False) -> Dict:
         return self.prefetch_all(force=force)
-
-    def _prefetch_daily(
-        self, source: CalendarificSource, days_ahead: int = None, force: bool = False
-    ) -> Dict[str, int]:
-        if days_ahead is None:
-            days_ahead = CALENDARIFIC_PREFETCH_DAYS
-        if not self.api_key:
-            return {"error": "No API key"}
-
-        stats = {"fetched": 0, "skipped": 0, "failed": 0, "holidays_found": 0, "api_calls": 0}
-        today = datetime.now()
-        cache_data = self._load_cache(source)
-
-        all_fetched = []  # Collect for batch emoji enrichment
-        fetched_dates = []
-
-        for i in range(days_ahead):
-            target = today + timedelta(days=i)
-            date_key = target.strftime("%Y-%m-%d")
-
-            if not force:
-                entry = cache_data.get("entries", {}).get(date_key)
-                if entry and self._is_entry_fresh(entry):
-                    stats["skipped"] += 1
-                    continue
-
-            try:
-                self._check_rate_limit()
-                holidays = self._fetch_from_api(source, target.year, target.month, target.day)
-                all_fetched.extend(holidays)
-                fetched_dates.append((target, holidays))
-                self._increment_rate_counter()
-                stats["fetched"] += 1
-                stats["api_calls"] += 1
-                stats["holidays_found"] += len(holidays)
-            except RateLimitExceeded:
-                stats["failed"] += 1
-                break
-            except Exception:
-                stats["failed"] += 1
-
-        # Batch emoji enrichment, then save
-        if all_fetched:
-            self._enrich_holidays_with_emojis(all_fetched)
-        for target, holidays in fetched_dates:
-            self._save_entry(source, target, holidays)
-
-        logger.info(
-            f"CALENDARIFIC [{source.id}]: Prefetch done — "
-            f"fetched: {stats['fetched']}, skipped: {stats['skipped']}, "
-            f"holidays: {stats['holidays_found']}"
-        )
-        return stats
 
     def _prefetch_yearly(self, source: CalendarificSource, force: bool = False) -> Dict:
         if not self.api_key:
@@ -543,24 +450,6 @@ class CalendarificClient:
         except OSError as e:
             logger.warning(f"CALENDARIFIC [{source.id}]: Failed to save cache: {e}")
 
-    def _save_entry(self, source: CalendarificSource, date: datetime, holidays: List[Dict]):
-        cache_data = self._load_cache(source)
-        cache_data["entries"][date.strftime("%Y-%m-%d")] = {
-            "holidays": holidays,
-            "cached_at": datetime.now().isoformat(),
-        }
-        self._save_cache(source, cache_data)
-
-    def _is_entry_fresh(self, entry: Dict) -> bool:
-        cached_at = entry.get("cached_at")
-        if not cached_at:
-            return False
-        try:
-            age = (datetime.now() - datetime.fromisoformat(cached_at)).total_seconds() / 86400
-            return age < self.cache_ttl_days
-        except (ValueError, TypeError):
-            return False
-
     def _is_source_cache_fresh(self, source: CalendarificSource, cache_data: Dict = None) -> bool:
         """Check if a source's cache is within TTL."""
         if cache_data is None:
@@ -682,7 +571,6 @@ class CalendarificClient:
                 "country": src.country,
                 "enabled": src.enabled,
                 "holiday_count": self.get_cached_holiday_count(src) if src.enabled else 0,
-                "fetch_strategy": src.fetch_strategy,
                 "last_updated": last_saved,
                 "cache_fresh": (
                     self._is_source_cache_fresh(src, cache_data) if src.enabled else False
