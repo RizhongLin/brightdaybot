@@ -271,20 +271,22 @@ def get_image_model_capabilities(model_name):
 # silently, so caps below ~400 risked empty-output fallbacks. Functionality >
 # pennies — keep room for reasoning tokens plus the actual visible text.
 TOKEN_LIMITS = {
-    "single_birthday": 1500,  # Default for regular birthday messages
-    "consolidated_birthday": 2500,  # Multiple birthday messages
-    "web_search_facts": 1500,  # Historical date summarization (+buffer for reasoning tokens)
-    "image_title_generation": 500,  # AI-generated image titles
-    "special_day_details": 1500,  # Single special day details (cached, no button value limit)
-    "special_day_details_consolidated": 2000,  # Multiple special day details (cached)
+    "single_birthday": 2000,  # Default for regular birthday messages
+    "consolidated_birthday": 3000,  # Multiple birthday messages
+    "web_search_facts": 2000,  # Historical date summarization (+buffer for reasoning tokens)
+    "image_title_generation": 1000,  # AI-generated image titles
+    "special_day_details": 2000,  # Single special day details (cached, no button value limit)
+    "special_day_details_consolidated": 2500,  # Multiple special day details (cached)
     # Interactive features
-    "mention_response": 800,  # Responses to @-mentions
-    "special_day_thread_response": 800,  # Responses to special day thread replies
-    "date_parsing": 400,  # NLP date extraction from natural language
+    "mention_response": 1500,  # Responses to @-mentions
+    "special_day_thread_response": 1500,  # Responses to special day thread replies
+    "date_parsing": 1000,  # NLP date extraction from natural language
     # Weekly digest
-    "digest_descriptions": 800,  # One-line descriptions for weekly digest observances
+    "digest_descriptions": 1500,  # One-line descriptions for weekly digest observances
+    # Grounded announcements
+    "observance_description": 800,  # Official-page description extraction
     # Vision analysis
-    "profile_analysis": 400,  # Vision API profile photo element extraction
+    "profile_analysis": 1000,  # Vision API profile photo element extraction
 }
 
 # Max characters for user input sanitization before embedding in AI prompts
@@ -507,6 +509,29 @@ SPECIAL_DAYS_IMAGE_ENABLED = os.getenv("SPECIAL_DAYS_IMAGE_ENABLED", "false").lo
 # Enable @-here mention in special day announcements (default: True for backwards compat)
 SPECIAL_DAY_MENTION_ENABLED = os.getenv("SPECIAL_DAY_MENTION_ENABLED", "true").lower() == "true"
 
+# Grounded announcements: the AI writes only a short themed intro; the factual
+# core shown in Slack is the official source description (quoted below the
+# intro). Eliminates hallucinated "facts" in channel announcements. Days
+# without a description fall back to the classic full AI message.
+GROUNDED_SPECIAL_DAYS_ENABLED = os.getenv("GROUNDED_SPECIAL_DAYS_ENABLED", "true").lower() == "true"
+
+# Max characters of the official description quoted in announcement blocks
+SPECIAL_DAY_QUOTE_MAX_CHARS = int(os.getenv("SPECIAL_DAY_QUOTE_MAX_CHARS", "300"))
+
+# Lazy description enrichment: scraped observance records carry a URL but an
+# empty description. On announcement day the official page for each of
+# today's observances is fetched and a faithful 1-2 sentence description is
+# extracted (LLM, grounded strictly in the page text) and cached permanently.
+OBSERVANCE_DESCRIPTIONS_CACHE_FILE = os.path.join(CACHE_DIR, "observance_descriptions.json")
+OBSERVANCE_DESCRIPTION_FETCH_TIMEOUT = int(
+    os.getenv("OBSERVANCE_DESCRIPTION_FETCH_TIMEOUT", "10")
+)  # seconds per page fetch
+OBSERVANCE_DESCRIPTION_PAGE_MAX_CHARS = 6000  # page text passed to the LLM
+
+# Optional cap on observances announced per day (0 = unlimited). Applied after
+# source-priority sorting, so official sources (UN/WHO/UNESCO) are kept first.
+MAX_SPECIAL_DAYS_PER_DAY = int(os.getenv("MAX_SPECIAL_DAYS_PER_DAY", "0"))
+
 # Enable channel topic update with today's special days (default: False)
 SPECIAL_DAY_TOPIC_UPDATE_ENABLED = (
     os.getenv("SPECIAL_DAY_TOPIC_UPDATE_ENABLED", "false").lower() == "true"
@@ -691,6 +716,12 @@ ICS_MAX_CONSECUTIVE_FAILURES = 4  # Auto-disable after this many failures
 # Enable bot reactions to birthday thread replies
 THREAD_ENGAGEMENT_ENABLED = os.getenv("THREAD_ENGAGEMENT_ENABLED", "true").lower() == "true"
 
+# Post a short follow-up in the birthday thread inviting teammates to share a
+# memory or emoji. Skipped when every birthday person prefers the quiet style.
+BIRTHDAY_THREAD_PROMPT_ENABLED = (
+    os.getenv("BIRTHDAY_THREAD_PROMPT_ENABLED", "true").lower() == "true"
+)
+
 # Thread reaction keyword mappings: (keywords, possible_reactions)
 THREAD_REACTION_KEYWORDS = (
     (("congrat", "happy birthday", "feliz", "joyeux"), ("tada", "birthday", "partying_face")),
@@ -751,11 +782,27 @@ MENTION_QA_ENABLED = os.getenv("MENTION_QA_ENABLED", "true").lower() == "true"
 MENTION_RATE_LIMIT_WINDOW = int(os.getenv("MENTION_RATE_LIMIT_WINDOW", "60"))  # seconds
 MENTION_RATE_LIMIT_MAX = int(os.getenv("MENTION_RATE_LIMIT_MAX", "5"))  # requests
 
+# Tool-calling @-mention agent: the model answers questions by calling
+# lookup tools (birthdays, upcoming birthdays, special days) instead of
+# relying on context stuffed into the prompt. Falls back to the legacy
+# prompt path on any error. Disable for instant rollback.
+MENTION_QA_TOOLS_ENABLED = os.getenv("MENTION_QA_TOOLS_ENABLED", "true").lower() == "true"
+MENTION_TOOL_MAX_ITERATIONS = 3  # bounded tool loop
+
 # ----- NLP DATE PARSING CONFIGURATION -----
 
 # Enable LLM-based date parsing for natural language birthday input
 # Falls back to regex parsing first, uses LLM only when regex fails
 NLP_DATE_PARSING_ENABLED = os.getenv("NLP_DATE_PARSING_ENABLED", "false").lower() == "true"
+
+# ----- DM BIRTHDAY SETUP DEPRECATION -----
+
+# The preferred setup paths are /birthday (modal form) and App Home.
+# DM-based setup (sending a date or `add DD/MM` in a DM) is being phased out:
+#   "enabled"  - DM setup works silently (legacy behavior)
+#   "nudge"    - DM setup still works but appends a tip pointing to /birthday
+#   "disabled" - DM setup rejected with a pointer to /birthday and App Home
+DM_BIRTHDAY_SETUP_MODE = os.getenv("DM_BIRTHDAY_SETUP_MODE", "nudge").lower()
 
 # ----- PROFILE ANALYSIS CONFIGURATION -----
 
