@@ -15,6 +15,7 @@ Main function: handle_command(). Routes to:
 from datetime import datetime, timezone
 
 from config import (
+    DM_BIRTHDAY_SETUP_MODE,
     TIMEOUTS,
     get_logger,
 )
@@ -367,6 +368,43 @@ def _send_birthday_confirmation(
             )
 
 
+def _dm_setup_rejected(say):
+    """
+    Enforce the DM birthday-setup deprecation policy.
+
+    Returns:
+        bool: True if DM setup is disabled and the user was redirected
+    """
+    if DM_BIRTHDAY_SETUP_MODE != "disabled":
+        return False
+
+    say(
+        blocks=[
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*Setting birthdays by DM has been retired.*\n\n"
+                    "Please use one of these instead:\n"
+                    "• `/birthday` — opens a quick form (works in any channel)\n"
+                    "• My *Home* tab — set your birthday and preferences there",
+                },
+            }
+        ],
+        text="Setting birthdays by DM has been retired — use /birthday instead.",
+    )
+    return True
+
+
+def _send_dm_setup_nudge(say):
+    """Append a deprecation tip after a successful DM birthday setup."""
+    if DM_BIRTHDAY_SETUP_MODE == "nudge":
+        say(
+            "💡 Heads-up: setting birthdays by DM is being phased out — "
+            "next time try `/birthday` (a quick form) or my Home tab."
+        )
+
+
 def handle_dm_date(say, user, result, app):
     """
     Handle a date sent in a DM to set or update user's birthday.
@@ -380,6 +418,9 @@ def handle_dm_date(say, user, result, app):
         result: Dict from extract_date() with keys 'date', 'year', 'status'
         app: Slack app instance
     """
+    if _dm_setup_rejected(say):
+        return
+
     date = result["date"]
     year = result["year"]
 
@@ -397,9 +438,16 @@ def handle_dm_date(say, user, result, app):
 
     # Check if birthday is today and send announcement if so
     if check_if_birthday_today(date):
-        send_immediate_birthday_announcement(
-            user, username, date, year, date_words, age_text, say, app
-        )
+        try:
+            send_immediate_birthday_announcement(
+                user, username, date, year, date_words, age_text, say, app
+            )
+        except Exception as e:
+            logger.error(f"DM_DATE: Immediate celebration failed for {username}: {e}")
+            say(
+                "Your birthday was saved, but I couldn't post the celebration right now — "
+                "it will go out with the next scheduled check."
+            )
     else:
         _send_birthday_confirmation(
             user, username, date, date_words, age_text, updated, say, source=" via date input"
@@ -409,6 +457,8 @@ def handle_dm_date(say, user, result, app):
     from storage.birthdays import trigger_external_backup
 
     trigger_external_backup(updated, username, app, user_id=user)
+
+    _send_dm_setup_nudge(say)
 
 
 def handle_command(text, user_id, say, app):
@@ -512,6 +562,9 @@ def _handle_add_command(parts, user_id, username, say, app):
     """
     from slack.blocks import build_birthday_error_blocks
 
+    if _dm_setup_rejected(say):
+        return
+
     date_text = " ".join(parts[1:])
     result = extract_date(date_text)
 
@@ -540,9 +593,16 @@ def _handle_add_command(parts, user_id, username, say, app):
 
     # Check if birthday is today and send announcement if so
     if check_if_birthday_today(date):
-        send_immediate_birthday_announcement(
-            user_id, username, date, year, date_words, age_text, say, app
-        )
+        try:
+            send_immediate_birthday_announcement(
+                user_id, username, date, year, date_words, age_text, say, app
+            )
+        except Exception as e:
+            logger.error(f"ADD_COMMAND: Immediate celebration failed for {username}: {e}")
+            say(
+                "Your birthday was saved, but I couldn't post the celebration right now — "
+                "it will go out with the next scheduled check."
+            )
     else:
         _send_birthday_confirmation(user_id, username, date, date_words, age_text, updated, say)
 
@@ -550,6 +610,8 @@ def _handle_add_command(parts, user_id, username, say, app):
     from storage.birthdays import trigger_external_backup
 
     trigger_external_backup(updated, username, app, user_id=user_id)
+
+    _send_dm_setup_nudge(say)
 
 
 def _handle_remove_command(user_id, username, say, app):

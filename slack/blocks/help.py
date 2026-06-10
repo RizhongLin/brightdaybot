@@ -2,8 +2,19 @@
 
 from typing import Any, Dict, List
 
-from config import UPCOMING_DAYS_DEFAULT, UPCOMING_DAYS_EXTENDED
+from config import (
+    DM_BIRTHDAY_SETUP_MODE,
+    MENTION_QA_ENABLED,
+    NLP_DATE_PARSING_ENABLED,
+    UPCOMING_DAYS_DEFAULT,
+    UPCOMING_DAYS_EXTENDED,
+)
 from config.personality import get_personality_descriptions
+
+
+def _dm_setup_active() -> bool:
+    """DM birthday setup is being phased out; hide DM date-entry hints once disabled."""
+    return DM_BIRTHDAY_SETUP_MODE != "disabled"
 
 
 def get_special_days_help_text() -> str:
@@ -408,7 +419,16 @@ _(All announcements require confirmation)_"""
                     },
                     {
                         "type": "mrkdwn",
-                        "text": "*DM Shortcut:*\nSend `25/12` or `25/12/1990`\nto add your birthday directly",
+                        "text": (
+                            (
+                                "*DM Shortcut:*\nSend `25/12`, `25/12/1990`,\n"
+                                "or just write it out — `July 14th` works too"
+                                if NLP_DATE_PARSING_ENABLED
+                                else "*DM Shortcut:*\nSend `25/12` or `25/12/1990`\nto add your birthday directly"
+                            )
+                            if _dm_setup_active()
+                            else "*App Home:*\nOpen my *Home* tab to set\nyour birthday and preferences"
+                        ),
                     },
                 ],
             }
@@ -424,7 +444,8 @@ _(All announcements require confirmation)_"""
             }
         )
 
-        birthday_commands = """• `/birthday` or `add DD/MM` - Add or update your birthday
+        add_command = "`/birthday` or `add DD/MM`" if _dm_setup_active() else "`/birthday`"
+        birthday_commands = f"""• {add_command} - Add or update your birthday
 • `/birthday check [@user]` or `check` - Check a birthday
 • `/birthday list` or `list` - Upcoming birthdays
 • `/birthday export` - Export birthdays to calendar (ICS)
@@ -466,6 +487,12 @@ _(All announcements require confirmation)_"""
         other_commands = """• `help` - Show this help message
 • `hello` - Get a friendly greeting
 • `admin help` - View admin commands _(if admin)_"""
+
+        if MENTION_QA_ENABLED:
+            other_commands = (
+                "• `@BrightDay [question]` - Mention me in a channel to ask about "
+                "birthdays, special days, or what I can do\n" + other_commands
+            )
 
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": other_commands}})
 
@@ -511,7 +538,16 @@ def build_unrecognized_input_blocks() -> tuple[List[Dict[str, Any]], str]:
             "fields": [
                 {
                     "type": "mrkdwn",
-                    "text": "*To add your birthday:*\nSend: `DD/MM` or `DD/MM/YYYY`\nExample: `25/12` or `25/12/1990`",
+                    "text": (
+                        (
+                            "*To add your birthday:*\nSend: `DD/MM`, `DD/MM/YYYY`,\n"
+                            "or plain English like `July 14th`"
+                            if NLP_DATE_PARSING_ENABLED
+                            else "*To add your birthday:*\nSend: `DD/MM` or `DD/MM/YYYY`\nExample: `25/12` or `25/12/1990`"
+                        )
+                        if _dm_setup_active()
+                        else "*To add your birthday:*\nUse `/birthday` (quick form)\nor my *Home* tab"
+                    ),
                 },
                 {
                     "type": "mrkdwn",
@@ -559,6 +595,18 @@ def build_slash_help_blocks(
                 },
             },
         ]
+        if MENTION_QA_ENABLED:
+            blocks.append(
+                {
+                    "type": "context",
+                    "elements": [
+                        {
+                            "type": "mrkdwn",
+                            "text": "💬 You can also mention me in a channel — `@BrightDay when is the next birthday?`",
+                        }
+                    ],
+                }
+            )
         fallback = "/birthday Command Help"
     else:
         blocks = [

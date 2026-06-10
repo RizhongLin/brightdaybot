@@ -293,6 +293,12 @@ def _send_birthday_today_message(app, user_id, username, date_ddmm, birth_year, 
         )
     except Exception as e:
         logger.error(f"MODAL: Failed to trigger immediate celebration for {username}: {e}")
+        send_message(
+            app,
+            user_id,
+            "Your birthday was saved, but I couldn't post the celebration right now — "
+            "it will go out with the next scheduled check.",
+        )
 
 
 def _send_modal_error(app, user_id, message):
