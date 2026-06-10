@@ -312,7 +312,7 @@ class TestAppHomeViewBuilding:
         mock_app = MagicMock()
 
         with patch("handlers.app_home_handler.load_birthdays", return_value={}):
-            with patch("handlers.app_home_handler.get_username", return_value="TestUser"):
+            with patch("services.birthday_queries.get_username", return_value="TestUser"):
                 with patch("slack.client.get_channel_members", return_value=["U123"]):
                     view = _build_home_view("U123", mock_app)
 
@@ -342,7 +342,7 @@ class TestAppHomeViewBuilding:
                     "celebration_style": "standard",
                 },
             ):
-                with patch("handlers.app_home_handler.get_username", return_value="TestUser"):
+                with patch("services.birthday_queries.get_username", return_value="TestUser"):
                     with patch("slack.client.get_channel_members", return_value=["U123"]):
                         view = _build_home_view("U123", mock_app)
 
@@ -380,11 +380,11 @@ class TestUpcomingBirthdaysFiltering:
 
         channel_members = [f"U{i}" for i in range(10)]
 
-        with patch("handlers.app_home_handler.get_username", return_value="User"):
+        with patch("services.birthday_queries.get_username", return_value="User"):
             with patch("slack.client.get_channel_members", return_value=channel_members):
                 with patch("storage.birthdays.is_user_active", return_value=True):
                     with patch(
-                        "handlers.app_home_handler.calculate_days_until_birthday",
+                        "services.birthday_queries.calculate_days_until_birthday",
                         side_effect=lambda d, r: datetime.strptime(d, "%d/%m").day,
                     ):
                         result = _get_upcoming_birthdays(birthdays, mock_app, limit=5)
@@ -409,11 +409,11 @@ class TestUpcomingBirthdaysFiltering:
             "U3": mock_birthday_data(date="02/01", year=1995),
         }
 
-        with patch("handlers.app_home_handler.get_username", return_value="User"):
+        with patch("services.birthday_queries.get_username", return_value="User"):
             with patch("slack.client.get_channel_members", return_value=["U1", "U2", "U3"]):
                 with patch("storage.birthdays.is_user_active", return_value=True):
                     with patch(
-                        "handlers.app_home_handler.calculate_days_until_birthday",
+                        "services.birthday_queries.calculate_days_until_birthday",
                         side_effect=[5, 5, 10],
                     ):
                         result = _get_upcoming_birthdays(birthdays, mock_app, limit=10)
@@ -433,11 +433,11 @@ class TestUpcomingBirthdaysFiltering:
             "U2": mock_birthday_data(date="02/01", year=1985),
         }
 
-        with patch("handlers.app_home_handler.get_username", return_value="User"):
+        with patch("services.birthday_queries.get_username", return_value="User"):
             with patch("slack.client.get_channel_members", return_value=["U1"]):
                 with patch("storage.birthdays.is_user_active", return_value=True):
                     with patch(
-                        "handlers.app_home_handler.calculate_days_until_birthday",
+                        "services.birthday_queries.calculate_days_until_birthday",
                         return_value=5,
                     ):
                         result = _get_upcoming_birthdays(birthdays, mock_app, limit=10)
@@ -459,11 +459,11 @@ class TestUpcomingBirthdaysFiltering:
         def is_active_side_effect(user_id, data):
             return data.get("preferences", {}).get("active", True)
 
-        with patch("handlers.app_home_handler.get_username", return_value="User"):
+        with patch("services.birthday_queries.get_username", return_value="User"):
             with patch("slack.client.get_channel_members", return_value=["U1", "U2"]):
                 with patch("storage.birthdays.is_user_active", side_effect=is_active_side_effect):
                     with patch(
-                        "handlers.app_home_handler.calculate_days_until_birthday",
+                        "services.birthday_queries.calculate_days_until_birthday",
                         return_value=5,
                     ):
                         result = _get_upcoming_birthdays(birthdays, mock_app, limit=10)

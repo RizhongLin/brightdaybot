@@ -80,3 +80,58 @@ class TestCompleteReturnContract:
         with patch("integrations.openai.get_openai_client", return_value=client):
             with pytest.raises(RuntimeError):
                 complete_with_usage(input_text="hi", model="gpt-5.5")
+
+
+class TestToolsParam:
+    def test_tools_included_when_provided(self):
+        tools = [{"type": "function", "name": "f", "parameters": {}}]
+        params = _build_api_params(
+            messages=None,
+            input_text="hi",
+            instructions=None,
+            model="gpt-5.5",
+            max_tokens=None,
+            temperature=None,
+            reasoning_effort=None,
+            tools=tools,
+        )
+        assert params["tools"] == tools
+
+    def test_tools_absent_when_none(self):
+        params = _build("gpt-5.5")
+        assert "tools" not in params
+
+    def test_list_input_passes_through_unchanged(self):
+        items = [{"role": "user", "content": "hi"}, {"type": "function_call_output"}]
+        params = _build_api_params(
+            messages=None,
+            input_text=items,
+            instructions=None,
+            model="gpt-5.5",
+            max_tokens=None,
+            temperature=None,
+            reasoning_effort=None,
+        )
+        assert params["input"] is items
+
+
+class TestCompleteRaw:
+    def test_returns_raw_response_object(self):
+        from integrations.openai import complete_raw
+
+        client = MagicMock()
+        fake = _fake_response("hello")
+        client.responses.create.return_value = fake
+        with patch("integrations.openai.get_openai_client", return_value=client):
+            result = complete_raw(input="hi", model="gpt-5.5")
+        assert result is fake
+
+    def test_passes_tools_to_api(self):
+        from integrations.openai import complete_raw
+
+        client = MagicMock()
+        client.responses.create.return_value = _fake_response("ok")
+        tools = [{"type": "function", "name": "f", "parameters": {}}]
+        with patch("integrations.openai.get_openai_client", return_value=client):
+            complete_raw(input="hi", model="gpt-5.5", tools=tools)
+        assert client.responses.create.call_args.kwargs["tools"] == tools

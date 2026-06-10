@@ -147,7 +147,7 @@ def classify_question(text: str) -> str:
     return "general"
 
 
-def handle_mention(app, event: dict, say) -> dict:
+def handle_mention(app, event: dict, say, bot_user_id: str = None) -> dict:
     """
     Handle an @-mention of the bot.
 
@@ -155,6 +155,9 @@ def handle_mention(app, event: dict, say) -> dict:
         app: Slack app instance
         event: The app_mention event
         say: Say function for responding
+        bot_user_id: The bot's own user ID. When provided, only the bot's
+            mention is stripped so user mentions like <@U123> survive into
+            the question (needed for "when is <@U123>'s birthday?").
 
     Returns:
         Dict with results: {"responded": bool, "question_type": str, "error": str or None}
@@ -195,9 +198,13 @@ def handle_mention(app, event: dict, say) -> dict:
             result["error"] = "rate_limited"
             return result
 
-        # Remove bot mention from text
-        # Pattern: <@BOTID> or <@BOTID|botname>
-        clean_text = re.sub(r"<@[A-Z0-9]+(\|[^>]+)?>", "", text).strip()
+        # Remove the bot's own mention from text, preserving user mentions
+        # (the tool agent needs <@U...> IDs from the question). Falls back to
+        # stripping all mentions when the bot's ID is unknown.
+        if bot_user_id:
+            clean_text = re.sub(rf"<@{re.escape(bot_user_id)}(\|[^>]+)?>", "", text).strip()
+        else:
+            clean_text = re.sub(r"<@[A-Z0-9]+(\|[^>]+)?>", "", text).strip()
 
         if not clean_text:
             # Just a mention with no question - provide help
@@ -258,9 +265,9 @@ def register_mention_handlers(app):
         return
 
     @app.event("app_mention")
-    def handle_app_mention(event, say, client, logger):
+    def handle_app_mention(event, say, client, context, logger):
         """Handle @-mentions of the bot."""
-        result = handle_mention(app, event, say)
+        result = handle_mention(app, event, say, bot_user_id=context.get("bot_user_id"))
 
         if result.get("responded"):
             logger.debug(

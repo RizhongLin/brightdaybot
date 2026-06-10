@@ -68,11 +68,44 @@ def get_openai_client():
 # =============================================================================
 
 
+def _log_and_record_usage(response, context):
+    """Log a response's token usage and add it to the daily usage tracker."""
+    if not (hasattr(response, "usage") and response.usage):
+        return
+
+    usage = response.usage
+    logger.info(
+        f"AI_{context}_USAGE: "
+        f"input={getattr(usage, 'input_tokens', 'N/A')}, "
+        f"output={getattr(usage, 'output_tokens', 'N/A')}, "
+        f"total={getattr(usage, 'total_tokens', 'N/A')}"
+    )
+    try:
+        from storage.ai_usage import record_usage
+
+        record_usage(
+            context,
+            getattr(usage, "input_tokens", 0) or 0,
+            getattr(usage, "output_tokens", 0) or 0,
+        )
+    except Exception:
+        pass  # accounting must never break generation
+
+
 def _build_api_params(
-    messages, input_text, instructions, model, max_tokens, temperature, reasoning_effort
+    messages,
+    input_text,
+    instructions,
+    model,
+    max_tokens,
+    temperature,
+    reasoning_effort,
+    tools=None,
 ):
     """Build Responses API parameters from Chat Completions-style inputs."""
     params = {"model": model}
+    if tools:
+        params["tools"] = tools
 
     if messages:
         system_content = None
@@ -156,14 +189,7 @@ def complete(
     try:
         response = client.responses.create(**params)
 
-        if hasattr(response, "usage") and response.usage:
-            usage = response.usage
-            logger.info(
-                f"AI_{context}_USAGE: "
-                f"input={getattr(usage, 'input_tokens', 'N/A')}, "
-                f"output={getattr(usage, 'output_tokens', 'N/A')}, "
-                f"total={getattr(usage, 'total_tokens', 'N/A')}"
-            )
+        _log_and_record_usage(response, context)
 
         text = response.output_text or ""
         if not text:
@@ -171,6 +197,59 @@ def complete(
                 f"AI_{context}: Empty output_text — likely reasoning consumed entire budget"
             )
         return text
+
+    except RateLimitError as e:
+        logger.error(f"AI_{context}_ERROR: Rate limit exceeded: {e}")
+        raise
+    except APITimeoutError as e:
+        logger.error(f"AI_{context}_ERROR: API request timed out: {e}")
+        raise
+    except APIConnectionError as e:
+        logger.error(f"AI_{context}_ERROR: Connection failed: {e}")
+        raise
+    except APIError as e:
+        logger.error(f"AI_{context}_ERROR: API error: {e}")
+        raise
+
+
+def complete_raw(
+    input=None,
+    instructions=None,
+    model=None,
+    max_tokens=None,
+    temperature=None,
+    context=None,
+    reasoning_effort=None,
+    tools=None,
+):
+    """
+    Call the Responses API and return the raw response object.
+
+    For tool-calling loops that need to inspect response.output for
+    function_call items. `input` may be a string or a list of Responses API
+    input items (messages, function_call_output items, prior output items).
+    Same exception contract as complete(): API errors propagate.
+
+    Returns:
+        Response: The raw OpenAI Responses API response object
+    """
+    client = get_openai_client()
+    model = model or get_configured_openai_model()
+    context = context or "COMPLETION"
+
+    params = _build_api_params(
+        None, input, instructions, model, max_tokens, temperature, reasoning_effort, tools=tools
+    )
+
+    logger.info(
+        f"AI_{context}: Calling Responses API with model={model}"
+        f"{' (tools enabled)' if tools else ''}"
+    )
+
+    try:
+        response = client.responses.create(**params)
+        _log_and_record_usage(response, context)
+        return response
 
     except RateLimitError as e:
         logger.error(f"AI_{context}_ERROR: Rate limit exceeded: {e}")
@@ -226,12 +305,7 @@ def complete_with_usage(
             "output_tokens": getattr(usage, "output_tokens", 0),
             "total_tokens": getattr(usage, "total_tokens", 0),
         }
-        logger.info(
-            f"AI_{context}_USAGE: "
-            f"input={usage_dict['input_tokens']}, "
-            f"output={usage_dict['output_tokens']}, "
-            f"total={usage_dict['total_tokens']}"
-        )
+    _log_and_record_usage(response, context)
 
     text = response.output_text or ""
     if not text:
@@ -301,14 +375,7 @@ def analyze_image(
             max_output_tokens=max_tokens,
         )
 
-        # Log usage
-        if hasattr(response, "usage") and response.usage:
-            usage = response.usage
-            logger.info(
-                f"AI_{context}_USAGE: "
-                f"input={getattr(usage, 'input_tokens', 'N/A')}, "
-                f"output={getattr(usage, 'output_tokens', 'N/A')}"
-            )
+        _log_and_record_usage(response, context)
 
         return response.output_text
 
@@ -391,6 +458,14 @@ def log_image_generation_usage(
                 f"images requested: {image_count}, "
                 f"images generated: {images_generated}"
             )
+
+            try:
+                from storage.ai_usage import record_usage
+
+                # Token counts don't apply to image calls; count the call itself
+                record_usage(operation_name, 0, 0)
+            except Exception:
+                pass
 
             if hasattr(response, "created") and response.created:
                 timestamp = datetime.fromtimestamp(response.created).strftime("%Y-%m-%d %H:%M:%S")
