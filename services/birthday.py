@@ -496,6 +496,18 @@ def check_and_announce_special_days(app, moment):
             + ", ".join([d.name for d in special_days])
         )
 
+        # Grounded announcements: fetch official descriptions for today's
+        # observances (cache misses only — a handful of pages, cached forever)
+        from config import GROUNDED_SPECIAL_DAYS_ENABLED
+
+        if GROUNDED_SPECIAL_DAYS_ENABLED:
+            try:
+                from integrations.observance_descriptions import enrich_descriptions
+
+                enrich_descriptions(special_days)
+            except Exception as e:
+                logger.warning(f"SPECIAL_DAYS: Description enrichment failed: {e}")
+
         # Determine channel to use
         channel = SPECIAL_DAYS_CHANNEL or BIRTHDAY_CHANNEL
 

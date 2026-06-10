@@ -33,6 +33,7 @@ from config import (
     ICS_CACHE_DIR,
     ICS_SUBSCRIPTIONS_ENABLED,
     MAX_BACKUPS,
+    MAX_SPECIAL_DAYS_PER_DAY,
     SPECIAL_DAYS_CATEGORIES,
     SPECIAL_DAYS_CONFIG_FILE,
     SPECIAL_DAYS_ENABLED,
@@ -611,6 +612,22 @@ def _get_significant_words(normalized_name: str) -> set:
     return set(w for w in normalized_name.split() if len(w) >= DEDUP_SIGNIFICANT_WORD_MIN_LENGTH)
 
 
+# Source priority: UN/WHO/UNESCO (0) > Calendarific/ICS (1) > Custom/CSV (2)
+_EXACT_SOURCE_PRIORITY = {"UN": 0, "WHO": 0, "UNESCO": 0}
+_PREFIX_SOURCE_PRIORITY = {"Calendarific": 1, "ICS": 1}
+
+
+def _source_priority(day: SpecialDay) -> int:
+    """Rank a day by source authority (lower = more authoritative)."""
+    source = getattr(day, "source", "") or ""
+    if source in _EXACT_SOURCE_PRIORITY:
+        return _EXACT_SOURCE_PRIORITY[source]
+    for prefix, priority in _PREFIX_SOURCE_PRIORITY.items():
+        if source.startswith(prefix):
+            return priority
+    return 2
+
+
 def _deduplicate_special_days(special_days: List[SpecialDay]) -> List[SpecialDay]:
     """
     Deduplicate special days using smart matching with O(n) optimization.
@@ -635,20 +652,7 @@ def _deduplicate_special_days(special_days: List[SpecialDay]) -> List[SpecialDay
     if not special_days:
         return []
 
-    # Sort by source priority: UN/WHO/UNESCO (0) > Calendarific/ICS (1) > Custom (2)
-    _exact_priority = {"UN": 0, "WHO": 0, "UNESCO": 0}
-    _prefix_priority = {"Calendarific": 1, "ICS": 1}
-
-    def get_priority(day: SpecialDay) -> int:
-        source = getattr(day, "source", "") or ""
-        if source in _exact_priority:
-            return _exact_priority[source]
-        for prefix, priority in _prefix_priority.items():
-            if source.startswith(prefix):
-                return priority
-        return 2
-
-    sorted_days = sorted(special_days, key=get_priority)
+    sorted_days = sorted(special_days, key=_source_priority)
 
     unique_days = []
     # Set of normalized names for O(1) exact match lookup
@@ -815,6 +819,27 @@ def get_special_days_for_date(
 
     # Deduplicate using smart matching (case-insensitive + fuzzy)
     unique_days = _deduplicate_special_days(filtered_days)
+
+    # Official sources lead every announcement; name tiebreak keeps order stable
+    unique_days.sort(key=lambda d: (_source_priority(d), d.name.lower()))
+
+    # Optional per-day cap (0 = unlimited), applied after the priority sort so
+    # official sources are kept first
+    if 0 < MAX_SPECIAL_DAYS_PER_DAY < len(unique_days):
+        dropped = [d.name for d in unique_days[MAX_SPECIAL_DAYS_PER_DAY:]]
+        logger.info(
+            f"CAP: Dropping {len(dropped)} observance(s) over "
+            f"MAX_SPECIAL_DAYS_PER_DAY={MAX_SPECIAL_DAYS_PER_DAY}: {', '.join(dropped)}"
+        )
+        unique_days = unique_days[:MAX_SPECIAL_DAYS_PER_DAY]
+
+    # Fill empty descriptions from the enrichment cache (cache-only, no network)
+    try:
+        from integrations.observance_descriptions import apply_cached_descriptions
+
+        apply_cached_descriptions(unique_days)
+    except Exception as e:
+        logger.debug(f"DESCRIPTION: Cache application skipped: {e}")
 
     if unique_days:
         logger.info(

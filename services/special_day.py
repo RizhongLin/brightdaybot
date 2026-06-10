@@ -11,6 +11,7 @@ from typing import List, Optional
 from config import (
     DESCRIPTION_TEASER_LENGTH,
     DIGEST_DESCRIPTION_LENGTH,
+    GROUNDED_SPECIAL_DAYS_ENABLED,
     IMAGE_GENERATION_PARAMS,
     REASONING_EFFORT,
     SPECIAL_DAY_MENTION_ENABLED,
@@ -112,12 +113,45 @@ def generate_special_day_message(
         today_formatted = format_date_european(today)  # e.g., "15 April 2025"
         day_of_week = today.strftime("%A")  # e.g., "Monday"
 
+        # Grounded mode: the official description carries the facts (quoted in
+        # the announcement blocks); the AI only writes a short themed intro.
+        # Only applies to single days that actually have a description.
+        grounded = (
+            GROUNDED_SPECIAL_DAYS_ENABLED
+            and len(special_days) == 1
+            and bool(getattr(special_days[0], "description", "") or "")
+        )
+
         facts_text = (
-            _fetch_facts_text(today.strftime("%d/%m"), personality) if include_facts else ""
+            _fetch_facts_text(today.strftime("%d/%m"), personality)
+            if include_facts and not grounded
+            else ""
         )
 
         # Prepare the prompt based on number of special days
-        if len(special_days) == 1:
+        if grounded:
+            day = special_days[0]
+            prompt = (
+                f"Today ({today_formatted}, {day_of_week}) is {day.name}"
+                f" ({day.category}). Write a short, lively 1-2 sentence intro in your"
+                " personality's voice announcing it — maximum 250 characters."
+                " Do NOT state facts, history, dates, or statistics about the"
+                " observance: the official description is displayed right below"
+                " your intro. Just set the tone and invite people to read on."
+            )
+            if suppress_mention:
+                prompt += (
+                    f"\n\nEMOJI OVERRIDE: Do NOT start with the observance emoji"
+                    f" {day.emoji or ''} — it's already shown in the header."
+                    f" Include 1-2 emojis naturally within the text instead."
+                    f" Available emojis: {emoji_examples}"
+                )
+            else:
+                prompt += (
+                    f"\n\nEMOJI USAGE: Include 1-2 relevant emojis."
+                    f" Available emojis: {emoji_examples}"
+                )
+        elif len(special_days) == 1:
             day = special_days[0]
 
             source_info = _build_source_link(day)
@@ -217,13 +251,13 @@ def generate_special_day_message(
         else:
             prompt += "\n\nDo NOT include <!here> or any channel mention."
 
-        # Add character limit for teasers
-        if use_teaser:
+        # Add character limit for teasers (grounded prompts carry their own limit)
+        if use_teaser and not grounded:
             prompt += "\n\nSTRICT LENGTH LIMIT: Maximum 400 characters total. Be concise."
 
         # Generate the message using Responses API
         # Use lower token limit for teasers (shorter messages)
-        max_tokens = 600 if use_teaser else TOKEN_LIMITS.get("single_birthday", 1500)
+        max_tokens = 1000 if use_teaser else TOKEN_LIMITS.get("single_birthday", 2000)
         temperature = TEMPERATURE_SETTINGS.get("default", 0.7)
 
         logger.info(
@@ -314,7 +348,7 @@ Available emojis: {emoji_examples}"""
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=500,
+            max_tokens=1000,
             temperature=TEMPERATURE_SETTINGS.get("default", 0.7),
             reasoning_effort=REASONING_EFFORT["analytical"],
             context="CONSOLIDATED_INTRO_MESSAGE",
@@ -439,7 +473,7 @@ TONE: Informative but not overwhelming. This is a summary, not a detailed announ
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=500,
+            max_tokens=1000,
             temperature=TEMPERATURE_SETTINGS.get("default", 0.7),
             reasoning_effort=REASONING_EFFORT["analytical"],
             context="WEEKLY_DIGEST_MESSAGE",

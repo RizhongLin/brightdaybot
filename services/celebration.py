@@ -295,6 +295,9 @@ class BirthdayCelebrationPipeline:
                 # Step 7d: Add epic thread celebration message
                 self._add_epic_thread_message(message_ts, valid_people)
 
+                # Step 7e: Invite teammates into the thread (memories/emojis)
+                self._add_engagement_prompt(message_ts, valid_people)
+
             # Step 8: Mark validated people as celebrated
             self._mark_as_celebrated(valid_people)
 
@@ -730,6 +733,46 @@ class BirthdayCelebrationPipeline:
         except Exception as e:
             # Don't let thread message failures affect the celebration
             logger.warning(f"{self.mode}: Failed to post epic thread message: {e}")
+
+    def _add_engagement_prompt(self, message_ts, birthday_people):
+        """
+        Post a short follow-up inviting teammates into the birthday thread.
+
+        Human replies are the best part of a celebration — this nudges them.
+        Skipped when every birthday person prefers the quiet style.
+        """
+        from config import BIRTHDAY_THREAD_PROMPT_ENABLED
+        from storage.birthdays import DEFAULT_PREFERENCES
+
+        if not BIRTHDAY_THREAD_PROMPT_ENABLED:
+            return
+
+        loud_people = [
+            p
+            for p in birthday_people
+            if p.get("preferences", {}).get(
+                "celebration_style", DEFAULT_PREFERENCES["celebration_style"]
+            )
+            != "quiet"
+        ]
+        if not loud_people:
+            return
+
+        mentions = ", ".join(f"<@{p['user_id']}>" for p in loud_people)
+        prompts = [
+            f"💬 Drop your favorite memory of {mentions} in this thread — or just leave an emoji! 👇",
+            f"📸 Got a story or a GIF for {mentions}? This thread is the place! 🎉",
+            f"✨ Pile on the birthday love for {mentions} — replies and reactions welcome! 🥳",
+        ]
+
+        try:
+            # Day-of-month pick keeps variety without RNG (stable in tests)
+            prompt = prompts[datetime.now().day % len(prompts)]
+            send_message(self.app, self.birthday_channel, prompt, thread_ts=message_ts)
+            logger.info(f"{self.mode}: Posted thread engagement prompt")
+        except Exception as e:
+            # Don't let prompt failures affect the celebration
+            logger.warning(f"{self.mode}: Failed to post engagement prompt: {e}")
 
     def _mark_as_celebrated(self, people):
         """

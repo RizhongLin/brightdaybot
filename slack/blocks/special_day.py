@@ -12,13 +12,36 @@ import time
 from typing import Any, Dict, List, Optional
 
 from config import (
+    GROUNDED_SPECIAL_DAYS_ENABLED,
     SLACK_SECTION_TEXT_MAX_LENGTH,
     SPECIAL_DAY_DETAILS_CACHE_FILE,
     SPECIAL_DAY_DETAILS_CACHE_TTL_DAYS,
+    SPECIAL_DAY_QUOTE_MAX_CHARS,
     UPCOMING_DAYS_DEFAULT,
     UPCOMING_DAYS_EXTENDED,
 )
 from config.personality import get_personality_display_name
+
+
+def _build_description_quote(day) -> Optional[str]:
+    """
+    Format a day's official description as a Slack quote, or None.
+
+    Used in grounded mode: the AI intro sets the tone while the official
+    source description (quoted) carries the facts.
+    """
+    if not GROUNDED_SPECIAL_DAYS_ENABLED:
+        return None
+
+    description = _get_attr(day, "description")
+    if not description:
+        return None
+
+    quote = " ".join(str(description).split())  # collapse whitespace/newlines
+    if len(quote) > SPECIAL_DAY_QUOTE_MAX_CHARS:
+        quote = quote[:SPECIAL_DAY_QUOTE_MAX_CHARS].rstrip() + "…"
+    return f"> {quote}"
+
 
 # --- Details cache (JSON file-backed) ---
 _details_cache_ttl = SPECIAL_DAY_DETAILS_CACHE_TTL_DAYS * 86400
@@ -163,6 +186,11 @@ def build_special_day_blocks(
         },
         {"type": "section", "text": {"type": "mrkdwn", "text": message}},
     ]
+
+    # Grounded mode: quote the official description as the factual core
+    quote = _build_description_quote(special_day)
+    if quote:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": quote}})
 
     # Add context block for metadata (date, source, and personality)
     context_elements = []
@@ -320,6 +348,13 @@ def build_consolidated_special_day_blocks(
         section_text = f"{label}\n{teaser}" if teaser else label
 
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": section_text}})
+
+        # Grounded mode: quote the official description (skipped in compact
+        # mode to stay within Slack's block limit)
+        if not compact:
+            quote = _build_description_quote(day)
+            if quote:
+                blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": quote}})
 
         # Context block — matches single-day context (source + personality)
         if not compact:
