@@ -9,6 +9,8 @@ admin system, automatic backups, component-specific logging.
 Uses Slack Bolt, OpenAI API, and background scheduling.
 """
 
+import sys
+
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
@@ -24,12 +26,26 @@ from handlers.slash_handler import register_slash_commands
 from services.birthday import simple_daily_check, timezone_aware_check
 
 # Import services
-from services.scheduler import run_now, setup_scheduler
+from services.scheduler import run_now, setup_scheduler, start_scheduler_watchdog
 from storage.settings import initialize_config
 from storage.special_days import initialize_special_days_cache
+from utils.health import get_missing_required_env
 
 # Initialize configuration from storage files
 initialize_config()
+
+# Fail fast on missing secrets when running as the main process. Must happen
+# before App() so the operator sees a clear message instead of an SDK
+# traceback at the first API call. Guarded so plain imports (tests, CI import
+# checks) stay side-effect free.
+if __name__ == "__main__":
+    _missing_env = get_missing_required_env()
+    if _missing_env:
+        logger.critical(
+            f"STARTUP: Missing required environment variables: {', '.join(_missing_env)}. "
+            "Set them in .env before starting the bot."
+        )
+        sys.exit(1)
 
 # Initialize Slack app with error handling
 app = App()
@@ -103,6 +119,10 @@ if __name__ == "__main__":
     try:
         # Set up the scheduler with direct birthday check functions
         setup_scheduler(app, timezone_aware_check, simple_daily_check)
+
+        # Watchdog: exit the process (systemd restarts us) if the scheduler
+        # thread dies or its heartbeat stalls — it has no in-process restart
+        start_scheduler_watchdog()
 
         # Initialize special days caches if stale or missing
         initialize_special_days_cache()

@@ -245,9 +245,67 @@ def restore_latest_backup():
         return False
 
 
+def _recover_corrupt_birthdays_file():
+    """
+    Quarantine a corrupt birthdays file and restore the latest backup.
+
+    The corrupt file is renamed aside (birthdays.json.corrupt-<timestamp>) so
+    forensics survive and the restored backup isn't immediately re-clobbered.
+    Posts a warning to the ops canvas either way.
+
+    Returns:
+        dict: Restored birthday data, or {} if no backup could be restored
+    """
+    lock = FileLock(BIRTHDAYS_LOCK_FILE, timeout=TIMEOUTS["file_lock"])
+    data: dict = {}
+
+    try:
+        with lock:
+            try:
+                quarantine_path = (
+                    f"{BIRTHDAYS_JSON_FILE}.corrupt-" f"{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                )
+                shutil.move(BIRTHDAYS_JSON_FILE, quarantine_path)
+                logger.error(f"CORRUPTION: Quarantined corrupt birthdays file to {quarantine_path}")
+            except OSError as e:
+                logger.error(f"CORRUPTION: Failed to quarantine corrupt file: {e}")
+
+            if restore_latest_backup():
+                try:
+                    with open(BIRTHDAYS_JSON_FILE, "r") as f:
+                        data = json.load(f)
+                    logger.warning(
+                        f"CORRUPTION: Auto-restored {len(data)} birthdays from latest backup"
+                    )
+                except (OSError, json.JSONDecodeError) as e:
+                    logger.error(f"CORRUPTION: Restored backup is unreadable: {e}")
+                    data = {}
+    except Exception as e:
+        logger.error(f"CORRUPTION: Auto-restore failed: {e}")
+
+    try:
+        # Local import to avoid circular dependency (canvas imports storage)
+        from slack.canvas import safe_record_warning
+
+        if data:
+            safe_record_warning("birthdays.json was corrupt — auto-restored from latest backup")
+        else:
+            safe_record_warning(
+                "birthdays.json is corrupt and no backup could be restored — "
+                "birthday data is currently empty"
+            )
+    except Exception:
+        pass
+
+    return data
+
+
 def load_birthdays():
     """
     Load birthdays from JSON storage (memoized by file mtime).
+
+    On JSON corruption, automatically quarantines the corrupt file and
+    restores the latest backup.
 
     Returns:
         Dictionary mapping user_id to birthday data with preferences
@@ -275,6 +333,11 @@ def load_birthdays():
         logger.warning(f"FILE_ERROR: {BIRTHDAYS_JSON_FILE} not found")
     except json.JSONDecodeError as e:
         logger.error(f"JSON_ERROR: Failed to parse birthdays JSON: {e}")
+        data = _recover_corrupt_birthdays_file()
+        try:
+            mtime = os.path.getmtime(BIRTHDAYS_JSON_FILE)
+        except OSError:
+            mtime = None
     except PermissionError as e:
         logger.error(f"PERMISSION_ERROR: Cannot read {BIRTHDAYS_JSON_FILE}: {e}")
     except Exception as e:

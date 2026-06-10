@@ -138,6 +138,26 @@ def check_environment():
     return env_status
 
 
+def get_missing_required_env():
+    """
+    Return names of required environment variables that are not set.
+
+    Includes BIRTHDAY_CHANNEL_ID on top of check_environment()'s secrets,
+    since the bot cannot function without a target channel. Used for
+    fail-fast validation at startup.
+
+    Returns:
+        list: Missing variable names (empty list when all are set)
+    """
+    env_status = check_environment()
+    missing = list(env_status.get("missing", []))
+
+    if not os.environ.get("BIRTHDAY_CHANNEL_ID"):
+        missing.append("BIRTHDAY_CHANNEL_ID")
+
+    return missing
+
+
 def check_birthdays_file():
     """Check birthdays JSON file and count entries."""
     file_status = check_file(BIRTHDAYS_JSON_FILE)

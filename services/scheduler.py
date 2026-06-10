@@ -521,6 +521,79 @@ def get_scheduler_health():
     }
 
 
+def watchdog_should_exit(health, uptime_seconds, grace_seconds=300):
+    """
+    Decide whether the watchdog should terminate the process.
+
+    Pure decision function (no side effects) so it can be unit-tested.
+
+    Args:
+        health: dict from get_scheduler_health()
+        uptime_seconds: Seconds since the watchdog started
+        grace_seconds: Startup grace period during which we never exit
+                       (startup catch-up can legitimately block the loop)
+
+    Returns:
+        bool: True if the process should exit so systemd restarts it
+    """
+    if uptime_seconds < grace_seconds:
+        return False
+
+    if not health.get("thread_alive", False):
+        return True
+
+    # A hung loop keeps the thread alive but stops heartbeating. Use a hard
+    # threshold well beyond the "stale" warning level to avoid false exits.
+    age = health.get("heartbeat_age_seconds")
+    if age is not None and age > 10 * HEARTBEAT_STALE_THRESHOLD_SECONDS:
+        return True
+
+    return False
+
+
+def start_scheduler_watchdog(grace_seconds=300, interval_seconds=60):
+    """
+    Start a daemon thread that exits the process if the scheduler dies.
+
+    The scheduler runs in a daemon thread with no in-process restart; canvas
+    refresh and health reporting run *inside* that thread, so a dead scheduler
+    is invisible from within. This watchdog runs outside it and forces a
+    process exit, letting systemd (Restart=on-failure) bring the bot back.
+    """
+    started = time.monotonic()
+
+    def _watch():
+        while True:
+            time.sleep(interval_seconds)
+            try:
+                health = get_scheduler_health()
+                if watchdog_should_exit(health, time.monotonic() - started, grace_seconds):
+                    logger.critical(
+                        "WATCHDOG: Scheduler thread dead or heartbeat stalled "
+                        f"(thread_alive={health.get('thread_alive')}, "
+                        f"heartbeat_age={health.get('heartbeat_age_seconds')}s) — "
+                        "exiting so systemd restarts the bot"
+                    )
+                    try:
+                        from slack.canvas import safe_record_warning
+
+                        safe_record_warning(
+                            "Scheduler watchdog triggered a restart (thread dead or hung)"
+                        )
+                    except Exception:
+                        pass
+                    os._exit(1)
+            except Exception as e:
+                logger.error(f"WATCHDOG: Health check failed (non-fatal): {e}")
+
+    watchdog = threading.Thread(target=_watch, name="scheduler-watchdog", daemon=True)
+    watchdog.start()
+    logger.info(
+        f"WATCHDOG: Scheduler watchdog started (interval={interval_seconds}s, "
+        f"grace={grace_seconds}s)"
+    )
+
+
 def get_scheduler_summary():
     """
     Get human-readable scheduler health summary
