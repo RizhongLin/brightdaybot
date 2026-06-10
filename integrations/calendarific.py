@@ -23,7 +23,6 @@ from config import (
     CACHE_RETENTION_DAYS,
     CALENDARIFIC_API_KEY,
     CALENDARIFIC_CACHE_DIR,
-    CALENDARIFIC_CACHE_TTL_DAYS,
     CALENDARIFIC_ENABLED,
     CALENDARIFIC_RATE_LIMIT_MONTHLY,
     CALENDARIFIC_RATE_WARNING_THRESHOLD,
@@ -97,7 +96,6 @@ class CalendarificClient:
     def __init__(self):
         self.api_key = CALENDARIFIC_API_KEY
         self.cache_dir = CALENDARIFIC_CACHE_DIR
-        self.cache_ttl_days = CALENDARIFIC_CACHE_TTL_DAYS
         self.sources = [CalendarificSource.from_dict(s) for s in CALENDARIFIC_SOURCES]
 
         # Validate unique source IDs
@@ -451,17 +449,12 @@ class CalendarificClient:
             logger.warning(f"CALENDARIFIC [{source.id}]: Failed to save cache: {e}")
 
     def _is_source_cache_fresh(self, source: CalendarificSource, cache_data: Dict = None) -> bool:
-        """Check if a source's cache is within TTL."""
+        """A yearly cache is fresh when it holds data for the current year."""
         if cache_data is None:
             cache_data = self._load_cache(source)
-        ts = cache_data.get("last_saved") or cache_data.get("cached_at")
-        if not ts:
+        if not cache_data.get("cached_at"):
             return bool(cache_data.get("entries"))  # Has data but no timestamp
-        try:
-            age = (datetime.now() - datetime.fromisoformat(ts)).total_seconds() / 86400
-            return age < self.cache_ttl_days
-        except (ValueError, TypeError):
-            return False
+        return cache_data.get("year") == datetime.now().year
 
     # ---- Rate limiting ----
 
@@ -518,8 +511,8 @@ class CalendarificClient:
             return None
 
     def needs_prefetch(self) -> bool:
-        last = self.get_last_prefetch()
-        return last is None or (datetime.now() - last).days >= self.cache_ttl_days
+        """True when any enabled source lacks a current-year cache."""
+        return any(not self._is_source_cache_fresh(source) for source in self.get_enabled_sources())
 
     # ---- Aggregation ----
 
@@ -585,7 +578,6 @@ class CalendarificClient:
             "monthly_limit": CALENDARIFIC_RATE_LIMIT_MONTHLY,
             "calls_remaining": CALENDARIFIC_RATE_LIMIT_MONTHLY - month_calls,
             "holiday_count": self.get_cached_holiday_count(),
-            "cache_ttl_days": self.cache_ttl_days,
             "last_prefetch": last_prefetch.isoformat() if last_prefetch else None,
             "needs_prefetch": self.needs_prefetch(),
         }

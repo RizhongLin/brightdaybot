@@ -551,7 +551,6 @@ SPECIAL_DAY_COMPACT_THRESHOLD = 8  # Switch to compact blocks above this count
 CALENDARIFIC_API_KEY = os.getenv("CALENDARIFIC_API_KEY")
 CALENDARIFIC_ENABLED = os.getenv("CALENDARIFIC_ENABLED", "false").lower() == "true"
 CALENDARIFIC_CACHE_DIR = os.path.join(CACHE_DIR, "calendarific")
-CALENDARIFIC_CACHE_TTL_DAYS = int(os.getenv("CALENDARIFIC_CACHE_TTL_DAYS", "7"))
 CALENDARIFIC_RATE_LIMIT_MONTHLY = 500  # Free tier: 500 calls/month
 CALENDARIFIC_SOURCES_STATE_FILE = os.path.join(STORAGE_DIR, "calendarific_sources.json")
 CALENDARIFIC_RATE_WARNING_THRESHOLD = 400  # Warn when approaching limit
